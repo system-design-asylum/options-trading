@@ -1,6 +1,5 @@
 # Options Trading - risky, high leverage trading for power traders
-## unlimited gain, limited loss for buyer
-## unlimited loss, limited gain for seller
+## unlimited gain, limited loss for buyer | unlimited loss, limited gain for seller
 
 A Rust-based options trading simulation engine built for learning both Rust programming and options trading concepts.
 
@@ -49,8 +48,7 @@ The simulation shows:
 
 ### Rust Programming
 - **Ownership & Borrowing**: See how data flows between functions (help!)
-- **Error Handling**: Result<T, E> patterns throughout
+- **Error Handling**: Result<T, E> patterns throughout (pls help!)
 - **Modules**: Clean separation of concerns
-- **Collections**: HashMap usage for efficient lookups
 
 Happy coding! 🦀
