@@ -9,11 +9,18 @@ pub fn escrow_address() -> Address {
         .expect("Invalid escrow address literal")
 }
 
+const MAX_FEE_BPS: u16 = 10_000;
+
 pub struct Market {
     pub users: HashMap<Address, User>,
     pub escrow_user: User,
     pub listings: HashMap<u32, ListingOption>,
     pub next_listing_id: u32,
+
+    pub beneficiary_fee_bps: u16, // basis points (10_000 for 100%)
+    pub grantor_fee_bps: u16,
+
+    pub market_admin_address: Address,
 }
 
 impl Market {
@@ -23,9 +30,14 @@ impl Market {
             escrow_user: User::new(escrow_address()),
             listings: HashMap::new(),
             next_listing_id: 1,
+            beneficiary_fee_bps: 10, // default to 0.1%
+            grantor_fee_bps: 10,     // default to 0.1%
+            market_admin_address: Address::from("0x953674f672475ec0A1aBE55156400c6F0086E90a")
+                .expect("failed to initialize market admin address"),
         }
     }
 
+    /** Getter funcs */
     pub fn get_user_or_error(&mut self, user_address: &Address) -> Result<&mut User, String> {
         self.users
             .get_mut(&user_address)
@@ -33,7 +45,9 @@ impl Market {
     }
 
     pub fn get_user_or_error_immutable(&self, user_address: &Address) -> Result<&User, String> {
-        self.users.get(&user_address).ok_or_else(|| String::from("User not found"))
+        self.users
+            .get(&user_address)
+            .ok_or_else(|| String::from("User not found"))
     }
 
     pub fn get_listing_or_error(&mut self, listing_id: u32) -> Result<&mut ListingOption, String> {
@@ -42,12 +56,56 @@ impl Market {
             .ok_or_else(|| String::from("Listing not found"))
     }
 
-    pub fn get_listing_or_error_immutable(&self, listing_id: u32) -> Result<&ListingOption, String> {
+    pub fn get_listing_or_error_immutable(
+        &self,
+        listing_id: u32,
+    ) -> Result<&ListingOption, String> {
         self.listings
             .get(&listing_id)
             .ok_or_else(|| String::from("Listing not found"))
     }
 
+    pub fn get_beneficiary_fee(&self, premium_price: f64) -> f64 {
+        premium_price * (self.beneficiary_fee_bps as f64) / (MAX_FEE_BPS as f64)
+    }
+
+    pub fn get_grantor_fee(&self, premium_price: f64) -> f64 {
+        premium_price * (self.grantor_fee_bps as f64) / (MAX_FEE_BPS as f64)
+    }
+    /** */
+
+    /** Setters */
+    pub fn set_beneficiary_fee_bps(
+        &mut self,
+        new_bps: u16,
+        caller_address: Address,
+    ) -> Result<(), String> {
+        if !are_addresses_equal(&caller_address, &self.market_admin_address) {
+            return Err("Only market admin only".into());
+        }
+        if new_bps > 10_000 {
+            return Err("Invalid bps, must be between 0 - 10.000".into());
+        }
+        self.beneficiary_fee_bps = new_bps;
+
+        Ok(())
+    }
+
+    pub fn set_grantor_fee_bps(
+        &mut self,
+        new_bps: u16,
+        caller_address: Address,
+    ) -> Result<(), String> {
+        if !are_addresses_equal(&caller_address, &self.market_admin_address) {
+            return Err("Only market admin only".into());
+        }
+        if new_bps > 10_000 {
+            return Err("Invalid bps, must be between 0 - 10.000".into());
+        }
+        self.grantor_fee_bps = new_bps;
+
+        Ok(())
+    }
 
     pub fn list_option(
         &mut self,
@@ -59,16 +117,24 @@ impl Market {
 
         // sanity check
         if option.listing_type == ListingType::CALL {
-            // get the seller's quote asset balance and compare numeric values
+            // For CALL options, seller must deposit base asset (e.g., BTC) as collateral
+            let base_balance = seller.get_balance(&option.base_asset);
+            // For simplicity, 1 contract = 1 unit of base asset (not 100 like traditional options)
+            let collateral_amount = 1.0; // 1 unit of base asset per contract
+            if base_balance < collateral_amount {
+                return Err("Insufficient base asset balance to cover CALL option".into());
+            }
+            seller.deduct_asset(&option.base_asset, collateral_amount)?;
+            self.escrow_user.add_asset(&option.base_asset, collateral_amount);
+        } else {
+            // For PUT options, seller must deposit quote asset (e.g., USDT) as collateral
             let quote_balance = seller.get_balance(&option.quote_asset);
-            // total price of 100 shares
-            let collateral_price = option.get_collateral_price();
+            let collateral_price = option.get_collateral_price(); // strike_price * 100
             if quote_balance < collateral_price {
-                return Err("Insufficient quote asset balance to cover CALL option".into());
+                return Err("Insufficient quote asset balance to cover PUT option".into());
             }
             seller.deduct_asset(&option.quote_asset, collateral_price)?;
-            self.escrow_user
-                .add_asset(&option.quote_asset, collateral_price);
+            self.escrow_user.add_asset(&option.quote_asset, collateral_price);
         }
 
         // store into listings
@@ -91,7 +157,7 @@ impl Market {
             .listings
             .get(&listing_id)
             .ok_or_else(|| String::from("Listing not found"))?;
-		
+
         if !are_addresses_equal(&grantor_address, &listing_immut.grantor_address) {
             return Err("Only the seller can unlist this option".into());
         }
@@ -111,12 +177,71 @@ impl Market {
             .remove(&listing_id)
             .ok_or_else(|| String::from("Listing not found"))?;
 
-        // Return money to grantor using the owned option
-        let collateral_price = option.get_collateral_price();
-        self.escrow_user
-            .deduct_asset(&option.base_asset, collateral_price)?;
-        let grantor = self.get_user_or_error(&grantor_address)?;
-        grantor.add_asset(&option.base_asset, collateral_price);
+        // Return collateral to grantor
+        if option.listing_type == ListingType::CALL {
+            // For CALL options, collateral is in base_asset (e.g., BTC)
+            let collateral_amount = 1.0; // Same as what we deposited in list_option
+            self.escrow_user
+                .deduct_asset(&option.base_asset, collateral_amount)?;
+            let grantor = self.get_user_or_error(&grantor_address)?;
+            grantor.add_asset(&option.base_asset, collateral_amount);
+        } else {
+            // For PUT options, collateral is in quote_asset (e.g., USDT)
+            let collateral_price = option.get_collateral_price(); // strike_price * 100
+            self.escrow_user
+                .deduct_asset(&option.quote_asset, collateral_price)?;
+            let grantor = self.get_user_or_error(&grantor_address)?;
+            grantor.add_asset(&option.quote_asset, collateral_price);
+        }
+
+        Ok(())
+    }
+
+    pub fn purchase_option(
+        &mut self,
+        listing_id: u32,
+        beneficiary_address: Address,
+    ) -> Result<(), String> {
+        // Borrow listing immutably to compute prices and fees.
+        let (premium_price, quote_asset, grantor_address, beneficiary_fee, grantor_fee) = {
+            let option = self.get_listing_or_error_immutable(listing_id)?;
+            let premium_price = option.get_premium_price();
+            let beneficiary_fee = self.get_beneficiary_fee(premium_price);
+            let grantor_fee = self.get_grantor_fee(premium_price);
+            // clone fields needed later while we still have the immutable borrow
+            (
+                premium_price,
+                option.quote_asset.clone(),
+                option.grantor_address.clone(),
+                beneficiary_fee,
+                grantor_fee,
+            )
+        };
+
+        // Compute amounts
+        let amt_from_beneficiary = premium_price + beneficiary_fee;
+        let amt_to_grantor = premium_price - grantor_fee;
+
+        // Deduct from beneficiary and collect fee
+        {
+            let beneficiary = self.get_user_or_error(&beneficiary_address)?;
+            if beneficiary.get_balance(&quote_asset) < amt_from_beneficiary {
+                return Err("Buyer doesn't have enough quote balance to purchase option".into());
+            }
+            beneficiary.deduct_asset(&quote_asset, amt_from_beneficiary)?;
+        }
+        self.escrow_user.add_asset(&quote_asset, beneficiary_fee);
+
+        // Dispatch money to grantor and collect fee
+        {
+            let grantor = self.get_user_or_error(&grantor_address)?;
+            grantor.add_asset(&quote_asset, amt_to_grantor);
+        }
+        self.escrow_user.add_asset(&quote_asset, grantor_fee);
+
+        // Mutate the listing (no other borrows active)
+        let option = self.get_listing_or_error(listing_id)?;
+        option.beneficiary_address = Some(beneficiary_address);
 
         Ok(())
     }
