@@ -1,7 +1,10 @@
 # Options Trading - risky, high leverage trading for power traders
-## unlimited gain, limited loss for buyer | unlimited loss, limited gain for seller
+**Concept:** Buyer acquires the right, but not the obligation to buy/sell the underlying assets defined in the options contract at any given time over the agreed upon period.
 
-A Rust-based options trading simulation engine built for learning both Rust programming and options trading concepts.
+
+**Risks:** Theoretical unlimited gain but limited loss for buyer | Theoretical unlimited loss but limited gain for seller
+
+## A Rust-based options trading simulation engine built for learning both Rust programming and options trading concepts.
 
 ## Project Structure
 
