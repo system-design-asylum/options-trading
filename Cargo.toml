@@ -1,0 +1,10 @@
+[package]
+name = "options-trading"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4"
+rand = "0.8"
+strum = "0.17.1"
+strum_macros = "0.27.2"
