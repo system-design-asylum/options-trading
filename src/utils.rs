@@ -1,5 +1,5 @@
-use crate::types::Address;
+use crate::address::Address;
 
 pub fn are_addresses_equal(address1: &Address, address2: &Address) -> bool {
-    address1.to_string().to_lowercase() == address2.to_string().to_lowercase()
+    address1.to_normalized() == address2.to_normalized()
 }

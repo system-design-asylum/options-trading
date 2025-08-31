@@ -1,5 +1,7 @@
+use crate::exchange_rate_provider::{get_exchange_rate_provider};
 use crate::listing_option::ListingOption;
-use crate::types::{Address, ListingType};
+use crate::address::Address;
+use crate::types::{ListingType};
 use crate::user::User;
 use crate::utils::are_addresses_equal;
 use std::collections::HashMap;
@@ -11,7 +13,7 @@ pub fn escrow_address() -> Address {
 
 const MAX_FEE_BPS: u16 = 10_000;
 
-pub struct Market {
+pub struct Exchange {
     pub users: HashMap<Address, User>,
     pub escrow_user: User,
     pub listings: HashMap<u32, ListingOption>,
@@ -23,9 +25,11 @@ pub struct Market {
     pub market_admin_address: Address,
 }
 
-impl Market {
-    pub fn new() -> Market {
-        Market {
+impl Exchange {
+    pub fn new() -> Exchange {
+        // init exchange rate provider if it hasn't been initialized
+
+        Exchange {
             users: HashMap::new(),
             escrow_user: User::new(escrow_address()),
             listings: HashMap::new(),
@@ -125,7 +129,8 @@ impl Market {
                 return Err("Insufficient base asset balance to cover CALL option".into());
             }
             seller.deduct_asset(&option.base_asset, collateral_amount)?;
-            self.escrow_user.add_asset(&option.base_asset, collateral_amount);
+            self.escrow_user
+                .add_asset(&option.base_asset, collateral_amount);
         } else {
             // For PUT options, seller must deposit quote asset (e.g., USDT) as collateral
             let quote_balance = seller.get_balance(&option.quote_asset);
@@ -134,7 +139,8 @@ impl Market {
                 return Err("Insufficient quote asset balance to cover PUT option".into());
             }
             seller.deduct_asset(&option.quote_asset, collateral_price)?;
-            self.escrow_user.add_asset(&option.quote_asset, collateral_price);
+            self.escrow_user
+                .add_asset(&option.quote_asset, collateral_price);
         }
 
         // store into listings

@@ -2,7 +2,8 @@
 
 use strum::IntoEnumIterator;
 
-use crate::types::{Address, Asset};
+use crate::asset::Asset;
+use crate::address::Address;
 use std::collections::HashMap;
 
 /// Represents a user in the trading system
