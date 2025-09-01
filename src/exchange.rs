@@ -127,31 +127,21 @@ impl Exchange {
         option: ListingOption,
     ) -> Result<u32, String> {
         // Get a mutable reference to the seller (we already checked it exists)
-        let seller = self.get_user_or_error(&caller_address)?;
+        let grantor = self.get_user_or_error(&caller_address)?;
 
-        // sanity check
-        if option.listing_type == ListingType::CALL {
-            // For CALL options, seller must deposit base asset (e.g., BTC) as collateral
-            let base_balance = seller.get_balance(&option.base_asset);
-            // For simplicity, 1 contract = 1 unit of base asset (not 100 like traditional options)
-            let collateral_amount = 1.0; // 1 unit of base asset per contract
-            if base_balance < collateral_amount {
-                return Err("Insufficient base asset balance to cover CALL option".into());
-            }
-            seller.deduct_asset(&option.base_asset, collateral_amount)?;
-            self.escrow_user
-                .add_asset(&option.base_asset, collateral_amount);
-        } else {
-            // For PUT options, seller must deposit quote asset (e.g., USDT) as collateral
-            let quote_balance = seller.get_balance(&option.quote_asset);
-            let collateral_price = option.get_collateral_price(); // strike_price * 100
-            if quote_balance < collateral_price {
-                return Err("Insufficient quote asset balance to cover PUT option".into());
-            }
-            seller.deduct_asset(&option.quote_asset, collateral_price)?;
-            self.escrow_user
-                .add_asset(&option.quote_asset, collateral_price);
+        let (sell_amount, sell_asset) =
+            { (option.get_sell_amount(true), option.get_sell_asset(true)) };
+
+        let sell_asset_balance = grantor.get_balance(&sell_asset);
+        if sell_asset_balance < sell_amount {
+            return Err(format!(
+                "Insufficient {} asset balance to cover {} option",
+                sell_asset, option.listing_type
+            ));
         }
+
+        grantor.deduct_asset(sell_asset, sell_amount)?;
+        self.escrow_user.add_asset(sell_asset, sell_amount)?;
 
         // store into listings
         let listing_id = self.next_listing_id;
@@ -187,28 +177,18 @@ impl Exchange {
         }
         // immutable borrow of listing ends here
 
-        // Remove the listing to take ownership (no longer borrowing self.listings)
+        // Remove the listing option to take ownership (no longer have to borrow afterwards)
         let option = self
             .listings
             .remove(&listing_id)
             .ok_or_else(|| String::from("Listing not found"))?;
 
-        // Return collateral to grantor
-        if option.listing_type == ListingType::CALL {
-            // For CALL options, collateral is in base_asset (e.g., BTC)
-            let collateral_amount = 1.0; // Same as what we deposited in list_option
-            self.escrow_user
-                .deduct_asset(&option.base_asset, collateral_amount)?;
-            let grantor = self.get_user_or_error(&caller_address)?;
-            grantor.add_asset(&option.base_asset, collateral_amount);
-        } else {
-            // For PUT options, collateral is in quote_asset (e.g., USDT)
-            let collateral_price = option.get_collateral_price(); // strike_price * 100
-            self.escrow_user
-                .deduct_asset(&option.quote_asset, collateral_price)?;
-            let grantor = self.get_user_or_error(&caller_address)?;
-            grantor.add_asset(&option.quote_asset, collateral_price);
-        }
+        let sell_amount = option.get_sell_amount(true);
+        let sell_asset = option.get_sell_asset(true);
+
+        self.escrow_user.deduct_asset(sell_asset, sell_amount)?;
+        let grantor = self.get_user_or_error(&caller_address)?;
+        grantor.add_asset(sell_asset, sell_amount)?;
 
         Ok(())
     }
@@ -252,18 +232,18 @@ impl Exchange {
         {
             let beneficiary = self.get_user_or_error(&beneficiary_address)?;
             if beneficiary.get_balance(&quote_asset) < amt_from_beneficiary {
-                return Err("Buyer doesn't have enough quote balance to purchase option".into());
+                return Err("Buyer doesn't have enough {} balance to purchase option".into());
             }
             beneficiary.deduct_asset(&quote_asset, amt_from_beneficiary)?;
         }
-        self.escrow_user.add_asset(&quote_asset, beneficiary_fee);
+        self.escrow_user.add_asset(&quote_asset, beneficiary_fee)?;
 
         // Dispatch money to grantor and collect fee
         {
             let grantor = self.get_user_or_error(&grantor_address)?;
-            grantor.add_asset(&quote_asset, amt_to_grantor);
+            grantor.add_asset(&quote_asset, amt_to_grantor)?;
         }
-        self.escrow_user.add_asset(&quote_asset, grantor_fee);
+        self.escrow_user.add_asset(&quote_asset, grantor_fee)?;
 
         // Mutate the listing (no other borrows active)
         let option = self.get_listing_or_error(listing_id)?;
@@ -279,7 +259,7 @@ impl Exchange {
         caller_address: Address,
     ) -> Result<(), String> {
         // Immutable borrow
-        let (exercised_amount, exercised_asset) = {
+        let (buy_amount, buy_asset, sell_amount, sell_asset, beneficiary_address) = {
             let option_immut = self.get_listing_or_error_immutable(listing_id)?;
 
             let is_beneficiary = are_addresses_equal(
@@ -308,22 +288,39 @@ impl Exchange {
             }
 
             (
-                option_immut.get_collateral_price(),
-                option_immut.get_exercised_asset().clone(),
+                option_immut.get_buy_amount(false),
+                option_immut.get_buy_asset(false).clone(),
+                option_immut.get_sell_amount(false),
+                option_immut.get_sell_asset(false).clone(),
+                // clone the beneficiary address so we don't return a reference into `self`
+                option_immut
+                    .beneficiary_address
+                    .as_ref()
+                    .expect("Panic: listed option doesn't have beneficiary address")
+                    .clone(),
             )
         };
 
-        // Perform transfers
-        let option = self.get_listing_or_error(listing_id)?;
-        option.is_exercised = true;
-
+        // Transfer buy asset from escrow to beneficiary (base if CALL, quote if PUT)
         {
-            assert!(self.escrow_user.get_balance(&exercised_asset) > exercised_amount);
-            let beneficiary = self.get_user_or_error(&caller_address)?;
-            beneficiary.add_asset(&exercised_asset, exercised_amount);
-            self.escrow_user
-                .deduct_asset(&exercised_asset, exercised_amount)?;
+            self.escrow_user.deduct_asset(&buy_asset, buy_amount)?;
         }
+        {
+            self.get_user_or_error(&caller_address)?
+                .add_asset(&buy_asset, buy_amount)?;
+        }
+
+        // Transfer sell asset from beneficiary to grantor (quote if CALL, base if PUT)
+        {
+            self.get_user_or_error(&caller_address)?
+                .deduct_asset(&sell_asset, sell_amount)?;
+        }
+        {
+            let grantor = self.get_user_or_error(&beneficiary_address)?;
+            grantor.add_asset(&sell_asset, sell_amount)?;
+        }
+
+        self.get_listing_or_error(listing_id)?.is_exercised = true;
 
         Ok(())
     }

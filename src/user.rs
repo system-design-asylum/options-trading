@@ -37,9 +37,10 @@ impl User {
     }
 
     /// Add assets to the user's portfolio
-    pub fn add_asset(&mut self, asset: &Asset, amount: f64) {
+    pub fn add_asset(&mut self, asset: &Asset, amount: f64) -> Result<(), String> {
         let balance = self.balances.entry(asset.clone()).or_insert(0.0);
         *balance += amount;
+        Ok(())
     }
 
     /// Deduct assets from the user's portfoli
