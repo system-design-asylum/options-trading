@@ -1,5 +1,5 @@
 use chrono::{Duration, Utc};
-use options_trading::{Address, Asset, ListingOption, ListingType, Market, User};
+use options_trading::{Address, Asset, ListingOption, ListingType, Exchange, User};
 
 #[cfg(test)]
 mod integration_tests {
@@ -14,7 +14,7 @@ mod integration_tests {
     #[test]
     fn test_complete_options_trading_workflow() {
         // Setup market
-        let mut market = Market::new();
+        let mut market = Exchange::new();
 
         // Create users
         let alice_addr = create_test_address("1");
@@ -46,7 +46,7 @@ mod integration_tests {
             strike_price: 50000.0,
             ask_price: 500.0,
             bid_price: 490.0,
-            expiration: Utc::now() + Duration::days(30),
+            expiration_time: Utc::now() + Duration::days(30),
             grantor_address: alice_addr.clone(),
             beneficiary_address: None,
         };
@@ -94,7 +94,7 @@ mod integration_tests {
             strike_price: 3000.0,
             ask_price: 200.0,
             bid_price: 190.0,
-            expiration: Utc::now() + Duration::days(15),
+            expiration_time: Utc::now() + Duration::days(15),
             grantor_address: charlie_addr.clone(),
             beneficiary_address: None,
         };
@@ -122,7 +122,7 @@ mod integration_tests {
 
     #[test]
     fn test_multiple_users_multiple_options() {
-        let mut market = Market::new();
+        let mut market = Exchange::new();
 
         // Create 3 users with different assets
         let addrs: Vec<Address> = (1..=3)
@@ -153,7 +153,7 @@ mod integration_tests {
                 strike_price: strikes[i],
                 ask_price: premiums[i],
                 bid_price: premiums[i] - 10.0,
-                expiration: Utc::now() + Duration::days(30),
+                expiration_time: Utc::now() + Duration::days(30),
                 grantor_address: addr.clone(),
                 beneficiary_address: None,
             };
@@ -189,7 +189,7 @@ mod integration_tests {
 
     #[test]
     fn test_fee_calculations_with_different_rates() {
-        let mut market = Market::new();
+        let mut market = Exchange::new();
         let admin_addr = market.market_admin_address.clone();
 
         // Set custom fee rates
@@ -221,7 +221,7 @@ mod integration_tests {
             strike_price: 50000.0,
             ask_price: 1000.0, // Higher premium for clearer fee calculation
             bid_price: 990.0,
-            expiration: Utc::now() + Duration::days(30),
+            expiration_time: Utc::now() + Duration::days(30),
             grantor_address: seller_addr.clone(),
             beneficiary_address: None,
         };

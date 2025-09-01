@@ -1,4 +1,5 @@
-use options_trading::types::{Asset, ListingType, Address, AddressError};
+use options_trading::types::{ListingType, Address, AddressError};
+use options_trading::asset::Asset;
 
 #[cfg(test)]
 mod tests {

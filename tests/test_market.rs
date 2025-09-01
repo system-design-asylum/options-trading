@@ -1,4 +1,4 @@
-use options_trading::{Market, User, ListingOption, Asset, ListingType, Address};
+use options_trading::{Exchange, User, ListingOption, Asset, ListingType, Address};
 use chrono::{Utc, Duration};
 
 #[cfg(test)]
@@ -20,14 +20,14 @@ mod tests {
             strike_price: 50000.0,
             ask_price: 500.0,
             bid_price: 490.0,
-            expiration: Utc::now() + Duration::days(30),
+            expiration_time: Utc::now() + Duration::days(30),
             grantor_address,
             beneficiary_address: None,
         }
     }
 
-    fn setup_market_with_users() -> (Market, Address, Address) {
-        let mut market = Market::new();
+    fn setup_market_with_users() -> (Exchange, Address, Address) {
+        let mut market = Exchange::new();
         
         let seller_addr = create_test_address("1");
         let buyer_addr = create_test_address("2");
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn test_market_creation() {
-        let market = Market::new();
+        let market = Exchange::new();
         
         assert!(market.users.is_empty());
         assert!(market.listings.is_empty());
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn test_get_fees() {
-        let market = Market::new();
+        let market = Exchange::new();
         let premium = 1000.0;
         
         // Default fees are 10 bps = 0.1%
@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn test_set_beneficiary_fee_bps_success() {
-        let mut market = Market::new();
+        let mut market = Exchange::new();
         let admin_addr = market.market_admin_address.clone();
         
         let result = market.set_beneficiary_fee_bps(50, admin_addr);
@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn test_set_beneficiary_fee_bps_unauthorized() {
-        let mut market = Market::new();
+        let mut market = Exchange::new();
         let unauthorized_addr = create_test_address("1");
         
         let result = market.set_beneficiary_fee_bps(50, unauthorized_addr);
@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_set_beneficiary_fee_bps_invalid() {
-        let mut market = Market::new();
+        let mut market = Exchange::new();
         let admin_addr = market.market_admin_address.clone();
         
         let result = market.set_beneficiary_fee_bps(10001, admin_addr);
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_list_option_insufficient_collateral() {
-        let mut market = Market::new();
+        let mut market = Exchange::new();
         let seller_addr = create_test_address("1");
         
         let mut seller = User::new(seller_addr.clone());
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_list_option_user_not_found() {
-        let mut market = Market::new();
+        let mut market = Exchange::new();
         let seller_addr = create_test_address("1");
         let option = create_test_option(seller_addr.clone());
         

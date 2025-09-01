@@ -20,7 +20,7 @@ mod tests {
             strike_price: 50000.0,
             ask_price: 500.0,
             bid_price: 490.0,
-            expiration: Utc::now() + Duration::days(30),
+            expiration_time: Utc::now() + Duration::days(30),
             grantor_address: create_test_address("1"),
             beneficiary_address: None,
         }
@@ -130,7 +130,7 @@ mod tests {
         let option = create_test_option();
         
         // Expiration should be in the future (30 days from now)
-        assert!(option.expiration > Utc::now());
+        assert!(option.expiration_time > Utc::now());
     }
 
     #[test]
