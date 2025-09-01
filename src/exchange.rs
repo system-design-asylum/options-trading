@@ -1,14 +1,20 @@
-use crate::exchange_rate_provider::{get_exchange_rate_provider};
-use crate::listing_option::ListingOption;
 use crate::address::Address;
-use crate::types::{ListingType};
+use crate::exchange_rate_provider::get_exchange_rate_provider;
+use crate::listing_option::ListingOption;
+use crate::rbac::RoleAuthorizer;
+use crate::types::ListingType;
 use crate::user::User;
 use crate::utils::are_addresses_equal;
 use std::collections::HashMap;
 
-pub fn escrow_address() -> Address {
+pub fn default_escrow_address() -> Address {
     Address::from("0x0000000000000000000000000000000000000000")
-        .expect("Invalid escrow address literal")
+        .expect("Invalid default escrow address literal")
+}
+
+pub fn default_exchange_admin_address() -> Address {
+    Address::from("0xb73B0A92544a5D2523F00F868d795d50DbDfcCf4")
+        .expect("Invalid exchange admin address literal")
 }
 
 const MAX_FEE_BPS: u16 = 10_000;
@@ -23,21 +29,25 @@ pub struct Exchange {
     pub grantor_fee_bps: u16,
 
     pub market_admin_address: Address,
+    pub role_authorizer: RoleAuthorizer,
 }
 
 impl Exchange {
     pub fn new() -> Exchange {
-        // init exchange rate provider if it hasn't been initialized
+        // Init exchange rate provider if it hasn't been initialized
 
         Exchange {
             users: HashMap::new(),
-            escrow_user: User::new(escrow_address()),
+            escrow_user: User::new(default_escrow_address()),
             listings: HashMap::new(),
             next_listing_id: 1,
             beneficiary_fee_bps: 10, // default to 0.1%
             grantor_fee_bps: 10,     // default to 0.1%
             market_admin_address: Address::from("0x953674f672475ec0A1aBE55156400c6F0086E90a")
                 .expect("failed to initialize market admin address"),
+
+            // Init RBAC authorizer (TODO: refactor to make a dedicated service handle auth in v2)
+            role_authorizer: RoleAuthorizer::new(),
         }
     }
 
@@ -113,11 +123,11 @@ impl Exchange {
 
     pub fn list_option(
         &mut self,
-        grantor_address: Address,
+        caller_address: Address,
         option: ListingOption,
     ) -> Result<u32, String> {
         // Get a mutable reference to the seller (we already checked it exists)
-        let seller = self.get_user_or_error(&grantor_address)?;
+        let seller = self.get_user_or_error(&caller_address)?;
 
         // sanity check
         if option.listing_type == ListingType::CALL {
@@ -157,14 +167,14 @@ impl Exchange {
     pub fn unlist_option(
         &mut self,
         listing_id: u32,
-        grantor_address: Address,
+        caller_address: Address,
     ) -> Result<(), String> {
         let listing_immut = self
             .listings
             .get(&listing_id)
             .ok_or_else(|| String::from("Listing not found"))?;
 
-        if !are_addresses_equal(&grantor_address, &listing_immut.grantor_address) {
+        if !are_addresses_equal(&caller_address, &listing_immut.grantor_address) {
             return Err("Only the seller can unlist this option".into());
         }
 
@@ -189,14 +199,14 @@ impl Exchange {
             let collateral_amount = 1.0; // Same as what we deposited in list_option
             self.escrow_user
                 .deduct_asset(&option.base_asset, collateral_amount)?;
-            let grantor = self.get_user_or_error(&grantor_address)?;
+            let grantor = self.get_user_or_error(&caller_address)?;
             grantor.add_asset(&option.base_asset, collateral_amount);
         } else {
             // For PUT options, collateral is in quote_asset (e.g., USDT)
             let collateral_price = option.get_collateral_price(); // strike_price * 100
             self.escrow_user
                 .deduct_asset(&option.quote_asset, collateral_price)?;
-            let grantor = self.get_user_or_error(&grantor_address)?;
+            let grantor = self.get_user_or_error(&caller_address)?;
             grantor.add_asset(&option.quote_asset, collateral_price);
         }
 
@@ -211,6 +221,16 @@ impl Exchange {
         // Borrow listing immutably to compute prices and fees.
         let (premium_price, quote_asset, grantor_address, beneficiary_fee, grantor_fee) = {
             let option = self.get_listing_or_error_immutable(listing_id)?;
+
+            // Exhaustive state transition check
+            match (option.is_purchased, option.is_unlisted, option.is_exercised) {
+                // Valid case first
+                (false, false, false) => {}
+                (true, _, _) => return Err("Option already purchased!".into()),
+                (_, true, _) => return Err("Option has been unlisted!".into()),
+                (_, _, true) => return Err("Option has already been exercised!".into()),
+            }
+
             let premium_price = option.get_premium_price();
             let beneficiary_fee = self.get_beneficiary_fee(premium_price);
             let grantor_fee = self.get_grantor_fee(premium_price);
@@ -248,7 +268,64 @@ impl Exchange {
         // Mutate the listing (no other borrows active)
         let option = self.get_listing_or_error(listing_id)?;
         option.beneficiary_address = Some(beneficiary_address);
+        option.is_purchased = true;
 
         Ok(())
     }
+
+    pub fn exercise_option(
+        &mut self,
+        listing_id: u32,
+        caller_address: Address,
+    ) -> Result<(), String> {
+        // Immutable borrow
+        let (exercised_amount, exercised_asset) = {
+            let option_immut = self.get_listing_or_error_immutable(listing_id)?;
+
+            let is_beneficiary = are_addresses_equal(
+                &caller_address,
+                option_immut
+                    .beneficiary_address
+                    .as_ref()
+                    .expect("panic: listed option doesn't have beneficiary address"),
+            );
+
+            // Exhaustive state validity check
+            match (
+                option_immut.is_purchased,
+                option_immut.is_unlisted,
+                option_immut.is_exercised,
+                is_beneficiary,
+            ) {
+                // Valid case first
+                (true, false, false, true) => {}
+                (false, false, false, true) => {
+                    panic!("panic: option has beneficiary but isn't purchased!")
+                }
+                (_, _, _, false) => return Err("Caller is not beneficiary of option!".into()),
+                (_, true, _, _) => return Err("Option has been unlisted!".into()),
+                (_, _, true, _) => return Err("Option has already been exercised!".into()),
+            }
+
+            (
+                option_immut.get_collateral_price(),
+                option_immut.get_exercised_asset().clone(),
+            )
+        };
+
+        // Perform transfers
+        let option = self.get_listing_or_error(listing_id)?;
+        option.is_exercised = true;
+
+        {
+            assert!(self.escrow_user.get_balance(&exercised_asset) > exercised_amount);
+            let beneficiary = self.get_user_or_error(&caller_address)?;
+            beneficiary.add_asset(&exercised_asset, exercised_amount);
+            self.escrow_user
+                .deduct_asset(&exercised_asset, exercised_amount)?;
+        }
+
+        Ok(())
+    }
+    // TODO: allow re-selling of acquired options contract
 }
