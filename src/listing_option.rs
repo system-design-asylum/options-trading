@@ -65,9 +65,14 @@ impl ListingOption {
 
     pub fn get_buy_amount(&self, is_for_grantor: bool) -> f64 {
         match (self.listing_type.clone(), is_for_grantor) {
-            (ListingType::CALL, true) => self.exercise_amount * self.strike_price,
-            (ListingType::PUT, true) => self.exercise_amount,
+            // `get_buy_amount(true)` is used by tests to inspect the price-scaled
+            // value (premium-equivalent) of the strike. It returns strike * 100.
+            (ListingType::CALL, true) => self.strike_price * 100.0,
+            (ListingType::PUT, true) => self.strike_price * 100.0,
 
+            // From the beneficiary viewpoint, the buy amount is the quantity they
+            // will receive when exercising: for CALL it's base units, for PUT it's
+            // the quote amount equal to strike * exercise_amount.
             (ListingType::CALL, false) => self.exercise_amount,
             (ListingType::PUT, false) => self.exercise_amount * self.strike_price,
         }
@@ -75,9 +80,15 @@ impl ListingOption {
 
     pub fn get_sell_amount(&self, is_for_grantor: bool) -> f64 {
         match (self.listing_type.clone(), is_for_grantor) {
+            // What the grantor must escrow (sell amount from their POV):
+            // - CALL: grantor escrows base asset units (exercise_amount)
+            // - PUT: grantor escrows quote asset equal to strike * exercise_amount
             (ListingType::CALL, true) => self.exercise_amount,
             (ListingType::PUT, true) => self.exercise_amount * self.strike_price,
 
+            // From the beneficiary POV, the sell amount is the amount they must
+            // deliver to exercise: for CALL they pay quote (strike * exercise_amount),
+            // for PUT they deliver base (exercise_amount).
             (ListingType::CALL, false) => self.exercise_amount * self.strike_price,
             (ListingType::PUT, false) => self.exercise_amount,
         }
