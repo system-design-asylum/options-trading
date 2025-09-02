@@ -54,7 +54,8 @@ mod tests {
     fn test_market_creation() {
         let market = Exchange::new();
 
-        assert!(market.users.is_empty());
+        // Exchange now creates an escrow user by default for spot trading
+        assert_eq!(market.users.len(), 1); // Only escrow user should exist
         assert!(market.listings.is_empty());
         assert_eq!(market.next_listing_id, 1);
         assert_eq!(market.beneficiary_fee_bps, 10);
