@@ -1,5 +1,7 @@
-use options_trading::types::{ListingType, Address, AddressError};
+use options_trading::Address;
+use options_trading::AddressError;
 use options_trading::asset::Asset;
+use options_trading::types::ListingType;
 
 #[cfg(test)]
 mod tests {
@@ -22,8 +24,14 @@ mod tests {
     fn test_asset_equality() {
         assert_eq!(Asset::BTC, Asset::BTC);
         assert_ne!(Asset::BTC, Asset::ETH);
-        assert_eq!(Asset::OTHER("TEST".to_string()), Asset::OTHER("TEST".to_string()));
-        assert_ne!(Asset::OTHER("TEST1".to_string()), Asset::OTHER("TEST2".to_string()));
+        assert_eq!(
+            Asset::OTHER("TEST".to_string()),
+            Asset::OTHER("TEST".to_string())
+        );
+        assert_ne!(
+            Asset::OTHER("TEST1".to_string()),
+            Asset::OTHER("TEST2".to_string())
+        );
     }
 
     #[test]
@@ -44,7 +52,7 @@ mod tests {
         let valid_address = "0x1234567890123456789012345678901234567890";
         let address = Address::from(valid_address);
         assert!(address.is_ok());
-        
+
         let addr = address.unwrap();
         assert_eq!(addr.to_string(), valid_address);
     }
@@ -53,9 +61,15 @@ mod tests {
     fn test_address_invalid_length() {
         let short_address = "0x123456789";
         let long_address = "0x123456789012345678901234567890123456789012345";
-        
-        assert_eq!(Address::from(short_address), Err(AddressError::InvalidLength));
-        assert_eq!(Address::from(long_address), Err(AddressError::InvalidLength));
+
+        assert_eq!(
+            Address::from(short_address),
+            Err(AddressError::InvalidLength)
+        );
+        assert_eq!(
+            Address::from(long_address),
+            Err(AddressError::InvalidLength)
+        );
     }
 
     #[test]
@@ -63,7 +77,7 @@ mod tests {
         let addr1 = Address::from("0x1234567890123456789012345678901234567890").unwrap();
         let addr2 = Address::from("0x1234567890123456789012345678901234567890").unwrap();
         let addr3 = Address::from("0x1234567890123456789012345678901234567891").unwrap();
-        
+
         assert!(addr1.is_equal_to(&addr2));
         assert!(!addr1.is_equal_to(&addr3));
     }
@@ -71,14 +85,32 @@ mod tests {
     #[test]
     fn test_address_hash_eq() {
         use std::collections::HashMap;
-        
+
         let addr1 = Address::from("0x1234567890123456789012345678901234567890").unwrap();
         let addr2 = Address::from("0x1234567890123456789012345678901234567890").unwrap();
-        
+
         let mut map = HashMap::new();
         map.insert(addr1, "value1");
-        
+
         // Should be able to retrieve using addr2 since they're equal
         assert_eq!(map.get(&addr2), Some(&"value1"));
+    }
+
+    #[test]
+    fn test_address_normalization_and_case() {
+        // Addresses should be comparable via their string value; test case-insensitivity by normalization
+        let mixed = "0xABCDEFabcdef1234567890123456789012345678";
+        // Ensure length is 42 for Address::from to succeed
+        let normalized = format!("{}", &mixed[0..42]);
+        let a = Address::from(&normalized).unwrap();
+        let b = a.to_normalized();
+        assert_eq!(b.to_string(), a.to_string().to_lowercase());
+    }
+
+    #[test]
+    fn test_listing_type_edge_cases() {
+        // Basic equality and display already covered; test that Display roundtrips via parsing is not implemented
+        assert_eq!(ListingType::CALL.to_string(), "CALL");
+        assert_eq!(ListingType::PUT.to_string(), "PUT");
     }
 }

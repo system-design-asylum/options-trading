@@ -23,6 +23,10 @@ mod tests {
             expiration_time: Utc::now() + Duration::days(30),
             grantor_address: create_test_address("1"),
             beneficiary_address: None,
+            exercise_amount: 1.0,
+            is_purchased: false,
+            is_unlisted: false,
+            is_exercised: false,
         }
     }
 
@@ -52,8 +56,8 @@ mod tests {
     fn test_get_collateral_price() {
         let option = create_test_option();
         
-        // Collateral price should be strike_price * 100
-        assert_eq!(option.get_collateral_price(), 5000000.0); // 50000.0 * 100
+    // Collateral price should be strike_price * 100 (grantor viewpoint)
+    assert_eq!(option.get_buy_amount(true), 5000000.0); // 50000.0 * 100
     }
 
     #[test]
@@ -66,8 +70,8 @@ mod tests {
         option.strike_price = 15.0; // 1 BTC = 15 ETH
         option.ask_price = 1.5;
         
-        assert_eq!(option.get_premium_price(), 150.0); // 1.5 * 100
-        assert_eq!(option.get_collateral_price(), 1500.0); // 15.0 * 100
+    assert_eq!(option.get_premium_price(), 150.0); // 1.5 * 100
+    assert_eq!(option.get_buy_amount(true), 1500.0); // 15.0 * 100
     }
 
     #[test]
@@ -77,8 +81,8 @@ mod tests {
         
         assert_eq!(option.listing_type, ListingType::PUT);
         // Premium and collateral calculations should remain the same
-        assert_eq!(option.get_premium_price(), 50000.0);
-        assert_eq!(option.get_collateral_price(), 5000000.0);
+    assert_eq!(option.get_premium_price(), 50000.0);
+    assert_eq!(option.get_buy_amount(true), 5000000.0);
     }
 
     #[test]
@@ -111,8 +115,8 @@ mod tests {
         option.ask_price = 0.0;
         option.strike_price = 0.0;
         
-        assert_eq!(option.get_premium_price(), 0.0);
-        assert_eq!(option.get_collateral_price(), 0.0);
+    assert_eq!(option.get_premium_price(), 0.0);
+    assert_eq!(option.get_buy_amount(true), 0.0);
     }
 
     #[test]
@@ -121,8 +125,8 @@ mod tests {
         option.ask_price = 1.23;
         option.strike_price = 45678.90;
         
-        assert_eq!(option.get_premium_price(), 123.0); // 1.23 * 100
-        assert_eq!(option.get_collateral_price(), 4567890.0); // 45678.90 * 100
+    assert_eq!(option.get_premium_price(), 123.0); // 1.23 * 100
+    assert_eq!(option.get_buy_amount(true), 4567890.0); // 45678.90 * 100
     }
 
     #[test]

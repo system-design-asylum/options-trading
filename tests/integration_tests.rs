@@ -1,5 +1,5 @@
 use chrono::{Duration, Utc};
-use options_trading::{Address, Asset, ListingOption, ListingType, Exchange, User};
+use options_trading::{Address, Asset, Exchange, ListingOption, ListingType, User};
 
 #[cfg(test)]
 mod integration_tests {
@@ -49,6 +49,10 @@ mod integration_tests {
             expiration_time: Utc::now() + Duration::days(30),
             grantor_address: alice_addr.clone(),
             beneficiary_address: None,
+            exercise_amount: 1.0,
+            is_purchased: false,
+            is_unlisted: false,
+            is_exercised: false,
         };
 
         let alice_listing_id = market
@@ -97,6 +101,10 @@ mod integration_tests {
             expiration_time: Utc::now() + Duration::days(15),
             grantor_address: charlie_addr.clone(),
             beneficiary_address: None,
+            exercise_amount: 100.0, // 100 ETH
+            is_purchased: false,
+            is_unlisted: false,
+            is_exercised: false,
         };
 
         let charlie_listing_id = market
@@ -156,6 +164,10 @@ mod integration_tests {
                 expiration_time: Utc::now() + Duration::days(30),
                 grantor_address: addr.clone(),
                 beneficiary_address: None,
+                exercise_amount: 1.0,
+                is_purchased: false,
+                is_unlisted: false,
+                is_exercised: false,
             };
 
             let listing_id = market.list_option(addr.clone(), option).unwrap();
@@ -224,6 +236,11 @@ mod integration_tests {
             expiration_time: Utc::now() + Duration::days(30),
             grantor_address: seller_addr.clone(),
             beneficiary_address: None,
+            // Added missing fields:
+            exercise_amount: 1.0,
+            is_purchased: false,
+            is_unlisted: false,
+            is_exercised: false,
         };
 
         let listing_id = market.list_option(seller_addr.clone(), option).unwrap();
