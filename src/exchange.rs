@@ -1,8 +1,9 @@
+use chrono::{DateTime, Utc};
+
 use crate::address::Address;
-use crate::exchange_rate_provider::get_exchange_rate_provider;
+// use crate::exchange_rate_provider::get_exchange_rate_provider;
 use crate::listing_option::ListingOption;
 use crate::rbac::RoleAuthorizer;
-use crate::types::ListingType;
 use crate::user::User;
 use crate::utils::are_addresses_equal;
 use std::collections::HashMap;
@@ -232,7 +233,10 @@ impl Exchange {
         {
             let beneficiary = self.get_user_or_error(&beneficiary_address)?;
             if beneficiary.get_balance(&quote_asset) < amt_from_beneficiary {
-                return Err("Buyer doesn't have enough {} balance to purchase option".into());
+                return Err(format!(
+                    "Buyer doesn't have enough {} balance to purchase option",
+                    quote_asset
+                ));
             }
             beneficiary.deduct_asset(&quote_asset, amt_from_beneficiary)?;
         }
@@ -259,7 +263,7 @@ impl Exchange {
         caller_address: Address,
     ) -> Result<(), String> {
         // Immutable borrow
-        let (buy_amount, buy_asset, sell_amount, sell_asset, beneficiary_address) = {
+        let (buy_amount, buy_asset, sell_amount, sell_asset, grantor_address) = {
             let option_immut = self.get_listing_or_error_immutable(listing_id)?;
 
             let is_beneficiary = are_addresses_equal(
@@ -270,21 +274,26 @@ impl Exchange {
                     .expect("panic: listed option doesn't have beneficiary address"),
             );
 
+            let now: DateTime<Utc> = Utc::now();
+            let is_expired = now > option_immut.expiration_time;
+
             // Exhaustive state validity check
             match (
                 option_immut.is_purchased,
                 option_immut.is_unlisted,
                 option_immut.is_exercised,
                 is_beneficiary,
+                is_expired,
             ) {
                 // Valid case first
-                (true, false, false, true) => {}
-                (false, false, false, true) => {
+                (true, false, false, true, false) => {}
+                (false, _, _, true, _) => {
                     panic!("panic: option has beneficiary but isn't purchased!")
                 }
-                (_, _, _, false) => return Err("Caller is not beneficiary of option!".into()),
-                (_, true, _, _) => return Err("Option has been unlisted!".into()),
-                (_, _, true, _) => return Err("Option has already been exercised!".into()),
+                (_, _, _, _, true) => return Err("Option has expired!".into()),
+                (_, _, _, false, _) => return Err("Caller is not beneficiary of option!".into()),
+                (_, true, _, _, _) => return Err("Option has been unlisted!".into()),
+                (_, _, true, _, _) => return Err("Option has already been exercised!".into()),
             }
 
             (
@@ -292,12 +301,8 @@ impl Exchange {
                 option_immut.get_buy_asset(false).clone(),
                 option_immut.get_sell_amount(false),
                 option_immut.get_sell_asset(false).clone(),
-                // clone the beneficiary address so we don't return a reference into `self`
-                option_immut
-                    .beneficiary_address
-                    .as_ref()
-                    .expect("Panic: listed option doesn't have beneficiary address")
-                    .clone(),
+                // clone grantor and beneficiary addresses so we don't return references into `self`
+                option_immut.grantor_address.clone(),
             )
         };
 
@@ -316,7 +321,7 @@ impl Exchange {
                 .deduct_asset(&sell_asset, sell_amount)?;
         }
         {
-            let grantor = self.get_user_or_error(&beneficiary_address)?;
+            let grantor = self.get_user_or_error(&grantor_address)?;
             grantor.add_asset(&sell_asset, sell_amount)?;
         }
 
