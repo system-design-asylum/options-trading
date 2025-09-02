@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 
+use crate::Asset;
 use crate::address::Address;
-// use crate::exchange_rate_provider::get_exchange_rate_provider;
+use crate::exchange_rate_provider::get_readonly_rate_provider;
 use crate::listing_option::ListingOption;
 use crate::rbac::RoleAuthorizer;
 use crate::user::User;
@@ -20,6 +21,11 @@ pub fn default_exchange_admin_address() -> Address {
 
 const MAX_FEE_BPS: u16 = 10_000;
 
+pub enum SpotAction {
+    BUY,
+    SELL,
+}
+
 pub struct Exchange {
     pub users: HashMap<Address, User>,
     pub escrow_user: User,
@@ -35,9 +41,9 @@ pub struct Exchange {
 
 impl Exchange {
     pub fn new() -> Exchange {
-        // Init exchange rate provider if it hasn't been initialized
+        let exchange_admin_addr = default_exchange_admin_address();
 
-        Exchange {
+        let mut exchange = Exchange {
             users: HashMap::new(),
             escrow_user: User::new(default_escrow_address()),
             listings: HashMap::new(),
@@ -48,8 +54,16 @@ impl Exchange {
                 .expect("failed to initialize market admin address"),
 
             // Init RBAC authorizer (TODO: refactor to make a dedicated service handle auth in v2)
-            role_authorizer: RoleAuthorizer::new(),
-        }
+            role_authorizer: RoleAuthorizer::new(exchange_admin_addr),
+        };
+
+        let escrow = std::mem::replace(
+            &mut exchange.escrow_user,
+            User::new(default_escrow_address()),
+        );
+        exchange.users.insert(escrow.address.clone(), escrow);
+
+        return exchange;
     }
 
     /** Getter funcs */
@@ -330,4 +344,79 @@ impl Exchange {
         Ok(())
     }
     // TODO: allow re-selling of acquired options contract
+
+    pub fn spot_trade_current_price(
+        &mut self,
+        base_asset: &Asset,
+        quote_asset: &Asset,
+        base_amount: f64,
+        action: &SpotAction,
+        caller_address: Address,
+    ) -> Result<(), String> {
+        let (buyer_addr, seller_addr) = match action {
+            SpotAction::BUY => (caller_address, self.escrow_user.address.clone()),
+            SpotAction::SELL => (self.escrow_user.address.clone(), caller_address),
+        };
+
+        self._spot_trade_current_price(
+            base_asset,
+            quote_asset,
+            base_amount,
+            &buyer_addr,
+            &seller_addr,
+        )
+    }
+
+    fn _spot_trade_current_price(
+        &mut self,
+        base_asset: &Asset,
+        quote_asset: &Asset,
+        base_amount: f64,
+        buyer_addr: &Address,
+        seller_addr: &Address,
+    ) -> Result<(), String> {
+        let rate_provider = get_readonly_rate_provider();
+        let exchange_rate = if let Some(rate) = rate_provider.get_rate(base_asset, quote_asset) {
+            rate
+        } else {
+            return Err(format!(
+                "Exchange rate for pair {}/{} not found",
+                base_asset, quote_asset
+            ));
+        };
+
+        let quote_amount = exchange_rate * base_amount;
+
+        // buyer pays quote to seller
+        self._transfer_between_addresses(&buyer_addr, &seller_addr, quote_asset, quote_amount)?;
+        // seller pays base to buyer
+        self._transfer_between_addresses(&seller_addr, &buyer_addr, base_asset, base_amount)?;
+
+        Ok(())
+    }
+
+    fn _transfer_between_addresses(
+        &mut self,
+        sender_addr: &Address,
+        recipient_addr: &Address,
+        asset: &Asset,
+        amount: f64,
+    ) -> Result<(), String> {
+        // Deduct from sender
+        let sender = self.get_user_or_error(&sender_addr)?;
+        let sender_balance = sender.get_balance(asset);
+        if sender_balance < amount {
+            return Err(format!(
+                "Transfer failed: sender doesn't have enough {} of {}",
+                amount, asset
+            ));
+        }
+        sender.deduct_asset(asset, amount)?;
+
+        // Credit to recipient
+        let recipient = self.get_user_or_error(&recipient_addr)?;
+        recipient.add_asset(asset, amount)?;
+
+        Ok(())
+    }
 }
